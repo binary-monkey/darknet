@@ -45,6 +45,14 @@ void hsv_to_rgb(image im);
 void yuv_to_rgb(image im);
 void rgb_to_yuv(image im);
 
+typedef struct Wrappers {
+        box *boxes;
+        float *probs;
+        int *class_n;
+} Wrapper;
+
+Wrapper *get_boxes(network *net, int im_w, int im_h, float thresh, float hier_thresh);
+void free_wrapper(Wrapper *w);
 
 image collapse_image_layers(image source, int border);
 image collapse_images_horz(image *ims, int n);
@@ -63,4 +71,3 @@ void copy_image_into(image src, image dest);
 image get_image_layer(image m, int l);
 
 #endif
-

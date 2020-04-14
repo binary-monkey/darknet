@@ -4,6 +4,7 @@
 #include "cuda.h"
 #include <stdio.h>
 #include <math.h>
+#include "darknet.h"
 
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.h"
@@ -81,8 +82,8 @@ static float bilinear_interpolate(image im, float x, float y, int c)
     float dx = x - ix;
     float dy = y - iy;
 
-    float val = (1-dy) * (1-dx) * get_pixel_extend(im, ix, iy, c) + 
-        dy     * (1-dx) * get_pixel_extend(im, ix, iy+1, c) + 
+    float val = (1-dy) * (1-dx) * get_pixel_extend(im, ix, iy, c) +
+        dy     * (1-dx) * get_pixel_extend(im, ix, iy+1, c) +
         (1-dy) *   dx   * get_pixel_extend(im, ix+1, iy, c) +
         dy     *   dx   * get_pixel_extend(im, ix+1, iy+1, c);
     return val;
@@ -124,7 +125,7 @@ image tile_images(image a, image b, int dx)
     if(a.w == 0) return copy_image(b);
     image c = make_image(a.w + b.w + dx, (a.h > b.h) ? a.h : b.h, (a.c > b.c) ? a.c : b.c);
     fill_cpu(c.w*c.h*c.c, 1, c.data, 1);
-    embed_image(a, c, 0, 0); 
+    embed_image(a, c, 0, 0);
     composite_image(b, c, a.w + dx, 0);
     return c;
 }
@@ -258,7 +259,7 @@ void free_alphabet(image** alphabet)
     for(j = 0; j < 8; ++j){
 		for(i = 32; i < 127; ++i){
 		free_image(alphabet[j][i]);
-		
+
 		}
         free(alphabet[j]);
     }
@@ -398,6 +399,62 @@ void draw_detections_file(image im, int num, float thresh, box *boxes, float **p
     fclose(file_probs);
 }
 
+Wrapper *get_boxes(network *net, int im_w, int im_h, float thresh, float hier_thresh)
+{
+        int j, k;
+        layer l = net->layers[net->n-1];
+        int num_boxes = l.w*l.h*l.n;
+
+        box *boxes = calloc(num_boxes, sizeof(box));
+
+        float max_prob = 0.0;
+        int current_class = 0;
+
+        float **probs = calloc(num_boxes, sizeof(float *));
+        for (j = 0; j < num_boxes; ++j) {
+                probs[j] = calloc(l.classes + 1, sizeof(float *));
+        }
+        float **masks = 0;
+        if (l.coords > 4) {
+                masks = calloc(num_boxes, sizeof(float *));
+                for(j = 0; j < num_boxes; ++j) {
+                        masks[j] = calloc(l.coords-4, sizeof(float *));
+                }
+        }
+
+        get_region_boxes(l, im_w, im_h, net->w, net->h, thresh, probs, boxes, masks, 0, 0, hier_thresh, 1);
+        do_nms_sort(boxes, probs, num_boxes, l.classes, 0.3);
+
+        Wrapper *wrapper = calloc(1, sizeof(Wrapper));
+        wrapper->class_n = calloc(num_boxes, sizeof(int));
+        wrapper->probs = calloc(num_boxes, sizeof(float));
+
+        for (j = 0; j < num_boxes-1; j++) {
+                max_prob = 0.0;
+                current_class = 0;
+                for (k=0; k<l.classes-1; k++) {
+                        if (max_prob < probs[j][k]) {
+                                max_prob = probs[j][k];
+                                current_class = k;
+                        }
+                }
+                wrapper->probs[j] = max_prob;
+                wrapper->class_n[j] = current_class;
+        }
+
+        wrapper->boxes = boxes;
+        free_ptrs((void **)probs, num_boxes);
+
+        return wrapper;
+}
+
+void free_wrapper(Wrapper *w)
+{
+        free(w->boxes);
+        free(w->class_n);
+        free(w->probs);
+        free(w);
+}
 
 
 void transpose_image(image im)
@@ -608,7 +665,7 @@ void show_image_cv(image p, const char *name, IplImage *disp)
     sprintf(buff, "%s", name);
 
     int step = disp->widthStep;
-    cvNamedWindow(buff, CV_WINDOW_NORMAL); 
+    cvNamedWindow(buff, CV_WINDOW_NORMAL);
     //cvMoveWindow(buff, 100*(windows%10) + 200*(windows/10), 100*(windows%10));
     ++windows;
     for(y = 0; y < p.h; ++y){
@@ -853,7 +910,7 @@ void place_image(image im, int w, int h, int dx, int dy, image canvas)
 
 image center_crop_image(image im, int w, int h)
 {
-    int m = (im.w < im.h) ? im.w : im.h;   
+    int m = (im.w < im.h) ? im.w : im.h;
     image c = crop_image(im, (im.w - m) / 2, (im.h - m)/2, m, m);
     image r = resize_image(c, w, h);
     free_image(c);
@@ -1015,7 +1072,7 @@ void letterbox_image_into(image im, int w, int h, image boxed)
         new_w = (im.w * h)/im.h;
     }
     image resized = resize_image(im, new_w, new_h);
-    embed_image(resized, boxed, (w-new_w)/2, (h-new_h)/2); 
+    embed_image(resized, boxed, (w-new_w)/2, (h-new_h)/2);
     free_image(resized);
 }
 
@@ -1035,7 +1092,7 @@ image letterbox_image(image im, int w, int h)
     fill_image(boxed, .5);
     //int i;
     //for(i = 0; i < boxed.w*boxed.h*boxed.c; ++i) boxed.data[i] = 0;
-    embed_image(resized, boxed, (w-new_w)/2, (h-new_h)/2); 
+    embed_image(resized, boxed, (w-new_w)/2, (h-new_h)/2);
     free_image(resized);
     return boxed;
 }
@@ -1301,7 +1358,7 @@ image blend_image(image fore, image back, float alpha)
     for(k = 0; k < fore.c; ++k){
         for(j = 0; j < fore.h; ++j){
             for(i = 0; i < fore.w; ++i){
-                float val = alpha * get_pixel(fore, i, j, k) + 
+                float val = alpha * get_pixel(fore, i, j, k) +
                     (1 - alpha)* get_pixel(back, i, j, k);
                 set_pixel(blend, i, j, k, val);
             }
@@ -1408,7 +1465,7 @@ void saturate_exposure_image(image im, float sat, float exposure)
 
 image resize_image(image im, int w, int h)
 {
-    image resized = make_image(w, h, im.c);   
+    image resized = make_image(w, h, im.c);
     image part = make_image(w, im.h, im.c);
     int r, c, k;
     float w_scale = (float)(im.w - 1) / (w - 1);
@@ -1605,7 +1662,7 @@ image collapse_images_vert(image *ims, int n)
         free_image(copy);
     }
     return filters;
-} 
+}
 
 image collapse_images_horz(image *ims, int n)
 {
@@ -1641,7 +1698,7 @@ image collapse_images_horz(image *ims, int n)
         free_image(copy);
     }
     return filters;
-} 
+}
 
 void show_image_normalized(image im, const char *name)
 {

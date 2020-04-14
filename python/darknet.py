@@ -23,6 +23,11 @@ class BOX(Structure):
                 ("w", c_float),
                 ("h", c_float)]
 
+class WRAPPER(Structure):
+    _fields_ = [("boxes", POINTER(BOX)),
+                ("probs", POINTER(c_float)),
+                ("class_n", POINTER(c_int))]
+
 class IMAGE(Structure):
     _fields_ = [("w", c_int),
                 ("h", c_int),
@@ -33,7 +38,7 @@ class METADATA(Structure):
     _fields_ = [("classes", c_int),
                 ("names", POINTER(c_char_p))]
 
-    
+
 
 #lib = CDLL("/home/pjreddie/documents/darknet/libdarknet.so", RTLD_GLOBAL)
 lib = CDLL("/opt/darknet/libdarknet.so", RTLD_GLOBAL)
@@ -103,6 +108,10 @@ predict_image.restype = POINTER(c_float)
 network_detect = lib.network_detect
 network_detect.argtypes = [c_void_p, IMAGE, c_float, c_float, c_float, POINTER(BOX), POINTER(POINTER(c_float))]
 
+get_boxes = lib.get_boxes
+get_boxes.argtypes = [c_void_p, c_int, c_int, c_float, c_float]
+get_boxes.restype = POINTER(WRAPPER)
+
 def classify(net, meta, im):
     out = predict_image(net, im)
     res = []
@@ -126,7 +135,7 @@ def detect(net, meta, image, thresh=.5, hier_thresh=.5, nms=.45):
     free_image(im)
     free_ptrs(cast(probs, POINTER(c_void_p)), num)
     return res
-    
+
 if __name__ == "__main__":
     #net = load_net("cfg/densenet201.cfg", "/home/pjreddie/trained/densenet201.weights", 0)
     #im = load_image("data/wolf.jpg", 0, 0)
@@ -137,5 +146,3 @@ if __name__ == "__main__":
     meta = load_meta("cfg/coco.data")
     r = detect(net, meta, "data/dog.jpg")
     print (r)
-    
-
